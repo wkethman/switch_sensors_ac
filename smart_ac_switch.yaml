@@ -236,6 +236,18 @@ blueprint:
       icon: mdi:tune
       collapsed: true
       input:
+        fused_temp_helper:
+          name: Fused temperature helper (input_number)
+          description: >
+            Optional. If set, the automation writes the recency-weighted fused
+            temperature to this helper every minute (as long as at least one
+            sensor is fresh). Useful for dashboards, graphs, and debugging.
+            Recommended config: min 0, max 150, step 0.1, unit °F.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: input_number
         window_sensor:
           name: Window/door sensor
           description: If on (open), the switch is forced off regardless of temperature.
@@ -324,6 +336,7 @@ variables:
   td_delta: !input trend_delta
   td_window: !input trend_window_minutes
   window_entity: !input window_sensor
+  fused_helper: !input fused_temp_helper
   cool_label: !input mode_cooling_label
   heat_label: !input mode_heating_label
   mm_delta: !input mode_mismatch_delta
@@ -384,6 +397,20 @@ variables:
     {{ fused_temp == 'none' or fresh_count | int < 2 }}
 
 actions:
+  # ---------- Update fused-temperature helper (if configured) ----------
+  # Writes on every trigger when at least one sensor is fresh. If no sensors
+  # are fresh, the helper keeps its last known value so dashboards still show
+  # the most recent good reading rather than going blank.
+  - if:
+      - condition: template
+        value_template: "{{ fused_helper not in ['', none] and fresh_count | int >= 1 }}"
+    then:
+      - action: input_number.set_value
+        target:
+          entity_id: "{{ fused_helper }}"
+        data:
+          value: "{{ fused_temp }}"
+
   - choose:
       # ---------- A. Runtime alert (edge-triggered) ----------
       - alias: "Runtime alert — switch on for max_runtime"

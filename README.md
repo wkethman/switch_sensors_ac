@@ -17,13 +17,14 @@ A single-automation blueprint that turns a dumb on/off switch into a thermostat-
 
 All temperatures are in **°F**.
 
-## Prerequisites — one helper to create first
+## Prerequisites — helpers to create first
 
-The blueprint needs exactly one helper. Create it via **Settings → Devices & Services → Helpers**:
+The blueprint needs **one required** helper and supports **one optional** debug helper. Create them via **Settings → Devices & Services → Helpers**:
 
-| Helper | Type | Purpose | Suggested config |
-| --- | --- | --- | --- |
-| AC mode | `input_select` | You set this when you change the physical mode of the AC | Options: `Cooling`, `Heating`, `Off` |
+| Helper | Type | Required? | Purpose | Suggested config |
+| --- | --- | --- | --- | --- |
+| AC mode | `input_select` | **Required** | You set this when you change the physical mode of the AC | Options: `Cooling`, `Heating`, `Off` |
+| AC fused temperature | `input_number` | Optional | The automation writes the recency-weighted fused temperature here every minute (when at least one sensor is fresh). Useful for dashboards, history graphs, and debugging. If no sensors are fresh the helper keeps its last value rather than going blank. | min `0`, max `150`, step `0.1`, unit `°F`, display `Box` |
 
 The notification target uses the **Home Assistant Companion app** — install it on the phone you want to be notified on and confirm it appears as a device under **Settings → Devices**.
 
