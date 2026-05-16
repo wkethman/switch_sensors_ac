@@ -15,7 +15,7 @@ A single-automation blueprint that turns a dumb on/off switch into a thermostat-
 - **Edge-triggered alerts** — each alert fires once when its condition becomes true. No cooldown helpers needed.
 - **Optional window/door cutoff** — forces the switch off when a binary sensor is open.
 
-All temperatures are in **°C**.
+All temperatures are in **°F**.
 
 ## Prerequisites — one helper to create first
 
@@ -68,11 +68,11 @@ Trade-off: on Home Assistant restart, in-memory edge state clears. If a conditio
 
 ## Tuning notes
 
-- **Deadband too small** → switch chatters. **Too large** → room overshoots. `0.5 °C` is a reasonable starting point for residential rooms.
+- **Deadband too small** → switch chatters. **Too large** → room overshoots. `1 °F` is a reasonable starting point for residential rooms.
 - **Min on/off time** protects the compressor. Most window/portable AC manuals require ~3 minutes between starts; `5 min` is safe.
 - **Max runtime** depends on your unit's capacity vs. the load. If your AC normally runs 90 minutes on a hot afternoon, set this to `120` so you only get alerted when something is actually wrong.
 - **Trend window** must be long enough that the AC has had a chance to start working. `15 min` is typical; shorter values produce false alarms.
-- **Trend tolerance (wrong-direction tolerance)** is added on top of the deadband. With deadband `0.5` and tolerance `0.5`, the trend alert fires when the room is still ≥ 1 °C past setpoint after the full window — i.e. the AC ran the whole window without converging.
+- **Trend tolerance (wrong-direction tolerance)** is added on top of the deadband. With deadband `1` and tolerance `1`, the trend alert fires when the room is still ≥ 2 °F past setpoint after the full window — i.e. the AC ran the whole window without converging.
 
 ## Troubleshooting
 

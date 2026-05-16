@@ -19,7 +19,7 @@ blueprint:
     once — acceptable trade-off for zero-helper install.
 
 
-    **Units:** all temperatures are in °C.
+    **Units:** all temperatures are in °F.
 
   domain: automation
   author: switch_sensors_ac
@@ -56,24 +56,24 @@ blueprint:
         summer_setpoint:
           name: Summer setpoint (cooling)
           description: Target temperature when mode is Cooling.
-          default: 24
+          default: 75
           selector:
             number:
-              min: 10
-              max: 32
-              step: 0.5
-              unit_of_measurement: "°C"
+              min: 50
+              max: 90
+              step: 1
+              unit_of_measurement: "°F"
               mode: box
         winter_setpoint:
           name: Winter setpoint (heating)
           description: Target temperature when mode is Heating.
-          default: 20
+          default: 68
           selector:
             number:
-              min: 5
-              max: 28
-              step: 0.5
-              unit_of_measurement: "°C"
+              min: 40
+              max: 82
+              step: 1
+              unit_of_measurement: "°F"
               mode: box
         deadband:
           name: Deadband (hysteresis)
@@ -81,13 +81,13 @@ blueprint:
             Cooling: ON when temp > setpoint + deadband, OFF when temp <
             setpoint − deadband. Heating: reversed. Prevents short cycling near
             the setpoint.
-          default: 0.5
+          default: 1
           selector:
             number:
-              min: 0.1
-              max: 3
-              step: 0.1
-              unit_of_measurement: "°C"
+              min: 0.5
+              max: 5
+              step: 0.5
+              unit_of_measurement: "°F"
               mode: box
 
     sensors:
@@ -199,13 +199,13 @@ blueprint:
             if the room is still farther than (deadband + this) from setpoint in
             the wrong direction — meaning the AC ran the full window and made
             no real progress.
-          default: 0.5
+          default: 1
           selector:
             number:
-              min: 0.1
-              max: 5
-              step: 0.1
-              unit_of_measurement: "°C"
+              min: 0.5
+              max: 9
+              step: 0.5
+              unit_of_measurement: "°F"
               mode: box
         trend_window_minutes:
           name: Trend evaluation window
@@ -262,13 +262,13 @@ blueprint:
             If cooling but fused temp is already this much BELOW setpoint, or
             heating but this much ABOVE, send a sanity alert (likely the mode
             helper is set wrong).
-          default: 3
+          default: 5
           selector:
             number:
-              min: 1
-              max: 10
-              step: 0.5
-              unit_of_measurement: "°C"
+              min: 2
+              max: 18
+              step: 1
+              unit_of_measurement: "°F"
               mode: box
 
 mode: queued
@@ -394,8 +394,8 @@ actions:
           - variables:
               msg: >-
                 Smart AC: switch has been ON for {{ max_runtime }} minutes without
-                turning off. Room is {{ fused_temp }} °C vs setpoint
-                {{ active_setpoint }} °C. Unit may not be reaching setpoint.
+                turning off. Room is {{ fused_temp }} °F vs setpoint
+                {{ active_setpoint }} °F. Unit may not be reaching setpoint.
           - action: notify.send_message
             target:
               device_id: !input notify_device
@@ -415,8 +415,8 @@ actions:
               msg: >-
                 Smart AC: switch has been ON in
                 {{ 'Cooling' if is_cooling else 'Heating' }} mode for
-                {{ td_window }} minutes but room is {{ fused_temp }} °C vs
-                setpoint {{ active_setpoint }} °C — no real progress. Check the unit.
+                {{ td_window }} minutes but room is {{ fused_temp }} °F vs
+                setpoint {{ active_setpoint }} °F — no real progress. Check the unit.
           - action: notify.send_message
             target:
               device_id: !input notify_device
@@ -435,7 +435,7 @@ actions:
           - variables:
               msg: >-
                 Smart AC: mode is "{{ states(mode_entity) }}" but room is
-                {{ fused_temp }} °C vs setpoint {{ active_setpoint }} °C —
+                {{ fused_temp }} °F vs setpoint {{ active_setpoint }} °F —
                 is the mode helper set correctly?
           - action: notify.send_message
             target:
