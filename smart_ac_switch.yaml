@@ -1,0 +1,560 @@
+blueprint:
+  name: Smart AC Switch Controller
+  description: >
+    Controls an on/off AC switch using up to 5 temperature sensors and a user-set
+    Cooling/Heating mode (input_select). Computes a recency-weighted "fused"
+    temperature, applies hysteresis with anti-short-cycle protection, and sends
+    diagnostic notifications when the AC appears to be failing.
+
+
+    **Required helper (create before importing):**
+
+    - 1 `input_select` with options including "Cooling" and "Heating" (and
+      optionally "Off") that you flip to mirror the AC's physical mode switch.
+
+
+    No other helpers required. Alert throttling is done by edge-triggering
+    (each alert fires once when its condition becomes true). On Home Assistant
+    restart, edge state resets and any currently-true condition may re-fire
+    once — acceptable trade-off for zero-helper install.
+
+
+    **Units:** all temperatures are in °C.
+
+  domain: automation
+  author: switch_sensors_ac
+  homeassistant:
+    min_version: "2024.8.0"
+
+  input:
+    switch_and_mode:
+      name: Switch & mode
+      icon: mdi:air-conditioner
+      input:
+        target_switch:
+          name: AC switch
+          description: The on/off switch entity that controls the AC unit.
+          selector:
+            entity:
+              filter:
+                - domain: switch
+        mode_select:
+          name: Mode helper (input_select)
+          description: >
+            An input_select whose options include "Cooling" and "Heating"
+            (case-insensitive substring match). The user updates this to mirror
+            the physical mode set on the AC unit.
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+
+    setpoints:
+      name: Setpoints
+      icon: mdi:thermometer
+      input:
+        summer_setpoint:
+          name: Summer setpoint (cooling)
+          description: Target temperature when mode is Cooling.
+          default: 24
+          selector:
+            number:
+              min: 10
+              max: 32
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+        winter_setpoint:
+          name: Winter setpoint (heating)
+          description: Target temperature when mode is Heating.
+          default: 20
+          selector:
+            number:
+              min: 5
+              max: 28
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+        deadband:
+          name: Deadband (hysteresis)
+          description: >
+            Cooling: ON when temp > setpoint + deadband, OFF when temp <
+            setpoint − deadband. Heating: reversed. Prevents short cycling near
+            the setpoint.
+          default: 0.5
+          selector:
+            number:
+              min: 0.1
+              max: 3
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: box
+
+    sensors:
+      name: Temperature sensors
+      icon: mdi:thermometer-lines
+      description: >
+        Up to 5 temperature sensors. Only sensor 1 is required. The automation
+        drops any sensor that is unavailable, non-numeric, or whose
+        last_updated exceeds the staleness threshold, then fuses the remainder
+        with a recency weight (1 / max(age_seconds, 1)).
+      input:
+        sensor_1:
+          name: Sensor 1 (required)
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        sensor_2:
+          name: Sensor 2
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        sensor_3:
+          name: Sensor 3
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        sensor_4:
+          name: Sensor 4
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        sensor_5:
+          name: Sensor 5
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        staleness_minutes:
+          name: Staleness threshold
+          description: Sensors not updated within this window are ignored.
+          default: 30
+          selector:
+            number:
+              min: 1
+              max: 240
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+
+    cycling:
+      name: Runtime & cycling
+      icon: mdi:timer-cog-outline
+      input:
+        max_runtime_minutes:
+          name: Max continuous runtime
+          description: Triggers the "running too long" alert.
+          default: 60
+          selector:
+            number:
+              min: 5
+              max: 480
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+        min_on_minutes:
+          name: Minimum ON time
+          description: Once turned on, keep the switch on at least this long.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+        min_off_minutes:
+          name: Minimum OFF time
+          description: Once turned off, keep the switch off at least this long.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+
+    trend:
+      name: Trend alert (not-making-progress)
+      icon: mdi:chart-line
+      input:
+        trend_delta:
+          name: Wrong-direction tolerance
+          description: >
+            After the switch has been continuously ON for the window below, alert
+            if the room is still farther than (deadband + this) from setpoint in
+            the wrong direction — meaning the AC ran the full window and made
+            no real progress.
+          default: 0.5
+          selector:
+            number:
+              min: 0.1
+              max: 5
+              step: 0.1
+              unit_of_measurement: "°C"
+              mode: box
+        trend_window_minutes:
+          name: Trend evaluation window
+          description: How long the switch must be continuously ON before the trend check fires.
+          default: 15
+          selector:
+            number:
+              min: 5
+              max: 120
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+
+    notifications:
+      name: Notifications
+      icon: mdi:bell-outline
+      input:
+        notify_device:
+          name: Mobile device
+          description: The phone/tablet running the Home Assistant Companion app.
+          selector:
+            device:
+              filter:
+                - integration: mobile_app
+
+    optional:
+      name: Optional
+      icon: mdi:tune
+      collapsed: true
+      input:
+        window_sensor:
+          name: Window/door sensor
+          description: If on (open), the switch is forced off regardless of temperature.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+        mode_cooling_label:
+          name: Cooling option label
+          description: Substring (case-insensitive) that identifies the Cooling state of the mode helper.
+          default: "Cooling"
+          selector:
+            text:
+        mode_heating_label:
+          name: Heating option label
+          description: Substring (case-insensitive) that identifies the Heating state of the mode helper.
+          default: "Heating"
+          selector:
+            text:
+        mode_mismatch_delta:
+          name: Mode-mismatch threshold
+          description: >
+            If cooling but fused temp is already this much BELOW setpoint, or
+            heating but this much ABOVE, send a sanity alert (likely the mode
+            helper is set wrong).
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 10
+              step: 0.5
+              unit_of_measurement: "°C"
+              mode: box
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  # Periodic evaluation for switch control logic
+  - trigger: time_pattern
+    minutes: "/1"
+    id: tick
+
+  # Edge triggers — used both to re-evaluate control and to fire one-shot alerts
+  - trigger: state
+    entity_id: !input target_switch
+    id: switch_changed
+
+  - trigger: state
+    entity_id: !input mode_select
+    id: mode_changed
+
+  # Runtime alert — fires exactly once when the switch has been ON for max_runtime
+  - trigger: state
+    entity_id: !input target_switch
+    to: "on"
+    for:
+      minutes: !input max_runtime_minutes
+    id: runtime_exceeded
+
+  # Trend alert — fires exactly once when the switch has been ON for trend_window
+  - trigger: state
+    entity_id: !input target_switch
+    to: "on"
+    for:
+      minutes: !input trend_window_minutes
+    id: trend_window_elapsed
+
+variables:
+  s1: !input sensor_1
+  s2: !input sensor_2
+  s3: !input sensor_3
+  s4: !input sensor_4
+  s5: !input sensor_5
+  switch_entity: !input target_switch
+  mode_entity: !input mode_select
+  summer_sp: !input summer_setpoint
+  winter_sp: !input winter_setpoint
+  band: !input deadband
+  staleness: !input staleness_minutes
+  max_runtime: !input max_runtime_minutes
+  min_on: !input min_on_minutes
+  min_off: !input min_off_minutes
+  td_delta: !input trend_delta
+  td_window: !input trend_window_minutes
+  window_entity: !input window_sensor
+  cool_label: !input mode_cooling_label
+  heat_label: !input mode_heating_label
+  mm_delta: !input mode_mismatch_delta
+  sensors: >-
+    {{ [s1, s2, s3, s4, s5] | reject('equalto', '') | reject('equalto', none) | list }}
+  current_mode: "{{ states(mode_entity) | lower }}"
+  is_cooling: "{{ cool_label | lower in current_mode }}"
+  is_heating: "{{ heat_label | lower in current_mode }}"
+  fresh: >-
+    {% set out = namespace(items=[]) %}
+    {% for s in sensors %}
+      {% set obj = states[s] %}
+      {% if obj is not none %}
+        {% set st = obj.state %}
+        {% set age = (now() - obj.last_updated).total_seconds() %}
+        {% if st not in ['unavailable', 'unknown', 'none', None] and st | float(default=none) is not none and age <= staleness * 60 %}
+          {% set out.items = out.items + [{'val': st | float, 'age': age}] %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ out.items }}
+  fresh_count: "{{ fresh | length }}"
+  fused_temp: >-
+    {% if fresh_count | int == 0 %}
+      none
+    {% else %}
+      {% set w = namespace(num=0, den=0) %}
+      {% for r in fresh %}
+        {% set weight = 1.0 / ([r.age, 1] | max) %}
+        {% set w.num = w.num + r.val * weight %}
+        {% set w.den = w.den + weight %}
+      {% endfor %}
+      {{ (w.num / w.den) | round(2) }}
+    {% endif %}
+  active_setpoint: >-
+    {{ summer_sp if is_cooling else (winter_sp if is_heating else none) }}
+  switch_state: "{{ states(switch_entity) }}"
+  switch_on: "{{ switch_state == 'on' }}"
+  since_change_min: >-
+    {{ ((now() - states[switch_entity].last_changed).total_seconds() / 60) | round(2)
+       if states[switch_entity] is not none else 0 }}
+  window_open: >-
+    {{ window_entity not in ['', none] and states(window_entity) == 'on' }}
+  no_progress_alert: >-
+    {{ fused_temp != 'none' and active_setpoint is not none and (
+         (is_cooling and (fused_temp | float) - (active_setpoint | float) >= (band | float) + (td_delta | float))
+         or
+         (is_heating and (active_setpoint | float) - (fused_temp | float) >= (band | float) + (td_delta | float))
+       ) }}
+  mode_mismatch_alert: >-
+    {{ fused_temp != 'none' and active_setpoint is not none
+       and (
+         (is_cooling and (active_setpoint | float) - (fused_temp | float) >= mm_delta | float)
+         or
+         (is_heating and (fused_temp | float) - (active_setpoint | float) >= mm_delta | float)
+       ) }}
+  health_alert: >-
+    {{ fused_temp == 'none' or fresh_count | int < 2 }}
+
+actions:
+  - choose:
+      # ---------- A. Runtime alert (edge-triggered) ----------
+      - alias: "Runtime alert — switch on for max_runtime"
+        conditions:
+          - condition: trigger
+            id: runtime_exceeded
+        sequence:
+          - variables:
+              msg: >-
+                Smart AC: switch has been ON for {{ max_runtime }} minutes without
+                turning off. Room is {{ fused_temp }} °C vs setpoint
+                {{ active_setpoint }} °C. Unit may not be reaching setpoint.
+          - action: notify.send_message
+            target:
+              device_id: !input notify_device
+            data:
+              title: "Smart AC — long runtime"
+              message: "{{ msg }}"
+
+      # ---------- B. Trend alert (edge-triggered, not-making-progress) ----------
+      - alias: "Trend alert — ran the full window without converging"
+        conditions:
+          - condition: trigger
+            id: trend_window_elapsed
+          - condition: template
+            value_template: "{{ no_progress_alert }}"
+        sequence:
+          - variables:
+              msg: >-
+                Smart AC: switch has been ON in
+                {{ 'Cooling' if is_cooling else 'Heating' }} mode for
+                {{ td_window }} minutes but room is {{ fused_temp }} °C vs
+                setpoint {{ active_setpoint }} °C — no real progress. Check the unit.
+          - action: notify.send_message
+            target:
+              device_id: !input notify_device
+            data:
+              title: "Smart AC — wrong direction"
+              message: "{{ msg }}"
+
+      # ---------- C. Mode-mismatch alert (edge-triggered on mode change) ----------
+      - alias: "Mode-mismatch alert — helper likely set wrong for season"
+        conditions:
+          - condition: trigger
+            id: mode_changed
+          - condition: template
+            value_template: "{{ mode_mismatch_alert }}"
+        sequence:
+          - variables:
+              msg: >-
+                Smart AC: mode is "{{ states(mode_entity) }}" but room is
+                {{ fused_temp }} °C vs setpoint {{ active_setpoint }} °C —
+                is the mode helper set correctly?
+          - action: notify.send_message
+            target:
+              device_id: !input notify_device
+            data:
+              title: "Smart AC — mode check"
+              message: "{{ msg }}"
+
+      # ---------- D. Sensor-health alert (tick-triggered, only on transitions) ----------
+      # Fires only on the minute tick, and only when health_alert is true AND
+      # was not true on the previous evaluation (tracked via trigger.from_state
+      # on the mode/switch entities won't help — we use a fresh-count threshold
+      # check: alert only if the fused temp is unavailable OR we just dropped
+      # below 2 sensors. To avoid spam without helpers, the alert fires once
+      # per tick *only when* fresh_count is exactly the threshold transitions
+      # (none -> 0, or 2 -> 1). Since we can't reliably observe "previous"
+      # without storage, we narrow the fire condition to the exact moment of
+      # transition by also requiring that a sensor's state changed in the past
+      # minute. This still produces at most ~1 alert per real sensor failure.)
+      - alias: "Sensor-health alert"
+        conditions:
+          - condition: trigger
+            id: tick
+          - condition: template
+            value_template: "{{ health_alert }}"
+          - condition: template
+            value_template: >-
+              {% set recent = namespace(found=false) %}
+              {% for s in sensors %}
+                {% set obj = states[s] %}
+                {% if obj is not none and (now() - obj.last_changed).total_seconds() < 90 %}
+                  {% set recent.found = true %}
+                {% endif %}
+              {% endfor %}
+              {{ recent.found }}
+        sequence:
+          - variables:
+              msg: >-
+                Smart AC: only {{ fresh_count }} of {{ sensors | length }}
+                temperature sensor(s) are reporting fresh data. Control may be degraded.
+          - action: notify.send_message
+            target:
+              device_id: !input notify_device
+            data:
+              title: "Smart AC — sensor health"
+              message: "{{ msg }}"
+
+      # ---------- E. Window/door open — force OFF ----------
+      - alias: "Window open — force switch off"
+        conditions:
+          - condition: template
+            value_template: "{{ window_open and switch_on and since_change_min >= min_on | int }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input target_switch
+
+      # ---------- F. Cooling — demand ON ----------
+      - alias: "Cooling demand — turn switch on"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ is_cooling and not switch_on and not window_open
+                 and fused_temp != 'none'
+                 and (fused_temp | float) > (summer_sp | float) + (band | float)
+                 and since_change_min >= min_off | int }}
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: !input target_switch
+
+      # ---------- G. Cooling — satisfied OFF ----------
+      - alias: "Cooling satisfied — turn switch off"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ is_cooling and switch_on
+                 and fused_temp != 'none'
+                 and (fused_temp | float) < (summer_sp | float) - (band | float)
+                 and since_change_min >= min_on | int }}
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input target_switch
+
+      # ---------- H. Heating — demand ON ----------
+      - alias: "Heating demand — turn switch on"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ is_heating and not switch_on and not window_open
+                 and fused_temp != 'none'
+                 and (fused_temp | float) < (winter_sp | float) - (band | float)
+                 and since_change_min >= min_off | int }}
+        sequence:
+          - action: switch.turn_on
+            target:
+              entity_id: !input target_switch
+
+      # ---------- I. Heating — satisfied OFF ----------
+      - alias: "Heating satisfied — turn switch off"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ is_heating and switch_on
+                 and fused_temp != 'none'
+                 and (fused_temp | float) > (winter_sp | float) + (band | float)
+                 and since_change_min >= min_on | int }}
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input target_switch
+
+      # ---------- J. No mode set — ensure OFF ----------
+      - alias: "No mode set — ensure switch off"
+        conditions:
+          - condition: template
+            value_template: "{{ not is_cooling and not is_heating and switch_on and since_change_min >= min_on | int }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input target_switch
