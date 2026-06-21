@@ -157,7 +157,7 @@ blueprint:
         max_runtime_minutes:
           name: Max continuous runtime
           description: Triggers the "running too long" alert.
-          default: 60
+          default: 120
           selector:
             number:
               min: 5
@@ -187,6 +187,21 @@ blueprint:
               step: 1
               unit_of_measurement: "min"
               mode: box
+        sensor_loss_timeout:
+          name: Sensor-loss shutdown timeout
+          description: >
+            If all sensors are lost (fused temperature unavailable) and the switch
+            has been continuously ON for at least this long, the switch is forced
+            off. Set to 0 to disable. A value of 5–10 minutes avoids false trips
+            from brief hub reboots while still protecting against runaway operation.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
 
     trend:
       name: Trend alert (not-making-progress)
@@ -199,7 +214,7 @@ blueprint:
             if the room is still farther than (deadband + this) from setpoint in
             the wrong direction — meaning the AC ran the full window and made
             no real progress.
-          default: 1
+          default: 2
           selector:
             number:
               min: 0.5
@@ -337,6 +352,7 @@ variables:
   td_window: !input trend_window_minutes
   window_entity: !input window_sensor
   fused_helper: !input fused_temp_helper
+  sensor_loss_timeout: !input sensor_loss_timeout
   cool_label: !input mode_cooling_label
   heat_label: !input mode_heating_label
   mm_delta: !input mode_mismatch_delta
@@ -394,7 +410,7 @@ variables:
          (is_heating and (fused_temp | float) - (active_setpoint | float) >= mm_delta | float)
        ) }}
   health_alert: >-
-    {{ fused_temp == 'none' or fresh_count | int < 2 }}
+    {{ fused_temp == 'none' or fresh_count | int < 1 }}
 
 actions:
   # ---------- Update fused-temperature helper (if configured) ----------
@@ -490,11 +506,20 @@ actions:
             value_template: "{{ health_alert }}"
           - condition: template
             value_template: >-
+              {% set threshold = staleness * 60 %}
               {% set recent = namespace(found=false) %}
               {% for s in sensors %}
                 {% set obj = states[s] %}
-                {% if obj is not none and (now() - obj.last_changed).total_seconds() < 90 %}
-                  {% set recent.found = true %}
+                {% if obj is not none %}
+                  {% set age = (now() - obj.last_updated).total_seconds() %}
+                  {# Fire if a sensor just crossed the staleness boundary (within the last tick) #}
+                  {% if age >= threshold and age < threshold + 60 %}
+                    {% set recent.found = true %}
+                  {% endif %}
+                  {# Also fire if a sensor went unavailable/unknown within the last 60s #}
+                  {% if obj.state in ['unavailable', 'unknown'] and (now() - obj.last_changed).total_seconds() < 60 %}
+                    {% set recent.found = true %}
+                  {% endif %}
                 {% endif %}
               {% endfor %}
               {{ recent.found }}
@@ -581,6 +606,26 @@ actions:
         conditions:
           - condition: template
             value_template: "{{ not is_cooling and not is_heating and switch_on and since_change_min >= min_on | int }}"
+        sequence:
+          - action: switch.turn_off
+            target:
+              entity_id: !input target_switch
+
+      # ---------- K. Sensor-loss safety shutdown ----------
+      # All sensors are lost (fused_temp == 'none') and the switch has been ON
+      # continuously past the sensor_loss_timeout grace period. Force off to
+      # prevent runaway operation. Disabled when sensor_loss_timeout == 0.
+      # Note: since_change_min measures time since the switch last changed state,
+      # not time since sensors went stale — use a generous default (10 min) to
+      # avoid false trips when sensors recover quickly after a hub reboot.
+      - alias: "Sensor-loss safety shutdown"
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ fused_temp == 'none'
+                 and switch_on
+                 and sensor_loss_timeout | int > 0
+                 and since_change_min >= sensor_loss_timeout | int }}
         sequence:
           - action: switch.turn_off
             target:
