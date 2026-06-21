@@ -1,6 +1,9 @@
 blueprint:
   name: Smart AC Switch Controller
   description: >
+    **Version 1.0.0**
+
+
     Controls an on/off AC switch using up to 5 temperature sensors and a user-set
     Cooling/Heating mode (input_select). Computes a recency-weighted "fused"
     temperature, applies hysteresis with anti-short-cycle protection, and sends
