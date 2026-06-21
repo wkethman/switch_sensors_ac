@@ -273,13 +273,23 @@ blueprint:
                 - domain: binary_sensor
         mode_cooling_label:
           name: Cooling option label
-          description: Substring (case-insensitive) that identifies the Cooling state of the mode helper.
+          description: >
+            Substring (case-insensitive) that identifies the Cooling state of the
+            mode helper. Must not be a substring of the Heating label (or vice
+            versa) — overlapping labels cause both modes to match simultaneously
+            and the wrong setpoint to be used. The defaults "Cooling" and
+            "Heating" are safe.
           default: "Cooling"
           selector:
             text:
         mode_heating_label:
           name: Heating option label
-          description: Substring (case-insensitive) that identifies the Heating state of the mode helper.
+          description: >
+            Substring (case-insensitive) that identifies the Heating state of the
+            mode helper. Must not be a substring of the Cooling label (or vice
+            versa) — overlapping labels cause both modes to match simultaneously
+            and the wrong setpoint to be used. The defaults "Cooling" and
+            "Heating" are safe.
           default: "Heating"
           selector:
             text:
@@ -410,7 +420,7 @@ variables:
          (is_heating and (fused_temp | float) - (active_setpoint | float) >= mm_delta | float)
        ) }}
   health_alert: >-
-    {{ fused_temp == 'none' or fresh_count | int < 1 }}
+    {{ fused_temp == 'none' }}
 
 actions:
   # ---------- Update fused-temperature helper (if configured) ----------
@@ -426,6 +436,35 @@ actions:
           entity_id: "{{ fused_helper }}"
         data:
           value: "{{ fused_temp }}"
+
+  # ---------- E. Window/door open — force OFF (unconditional, not in choose) ----------
+  # Runs on every trigger before the thermostat choose block so that a window-open
+  # force-off is never preempted by an alert branch matching first.
+  - if:
+      - condition: template
+        value_template: "{{ window_open and switch_on and since_change_min >= min_on | int }}"
+    then:
+      - action: switch.turn_off
+        target:
+          entity_id: !input target_switch
+
+  # ---------- K. Sensor-loss safety shutdown (unconditional, not in choose) ----------
+  # Runs on every trigger before the thermostat choose block so that a sensor-loss
+  # shutdown is never preempted by an alert branch matching first.
+  # Note: since_change_min measures time since the switch last changed state, not
+  # since sensors went stale. If the switch was already on when sensors failed the
+  # clock started earlier, so use a generous default (10 min) to avoid false trips.
+  - if:
+      - condition: template
+        value_template: >-
+          {{ fused_temp == 'none'
+             and switch_on
+             and sensor_loss_timeout | int > 0
+             and since_change_min >= sensor_loss_timeout | int }}
+    then:
+      - action: switch.turn_off
+        target:
+          entity_id: !input target_switch
 
   - choose:
       # ---------- A. Runtime alert (edge-triggered) ----------
@@ -457,7 +496,7 @@ actions:
           - variables:
               msg: >-
                 Smart AC: switch has been ON in
-                {{ 'Cooling' if is_cooling else 'Heating' }} mode for
+                {{ 'Cooling' if is_cooling else ('Heating' if is_heating else 'Unknown') }} mode for
                 {{ td_window }} minutes but room is {{ fused_temp }} °F vs
                 setpoint {{ active_setpoint }} °F — no real progress. Check the unit.
           - action: notify.send_message
@@ -487,17 +526,11 @@ actions:
               title: "Smart AC — mode check"
               message: "{{ msg }}"
 
-      # ---------- D. Sensor-health alert (tick-triggered, only on transitions) ----------
-      # Fires only on the minute tick, and only when health_alert is true AND
-      # was not true on the previous evaluation (tracked via trigger.from_state
-      # on the mode/switch entities won't help — we use a fresh-count threshold
-      # check: alert only if the fused temp is unavailable OR we just dropped
-      # below 2 sensors. To avoid spam without helpers, the alert fires once
-      # per tick *only when* fresh_count is exactly the threshold transitions
-      # (none -> 0, or 2 -> 1). Since we can't reliably observe "previous"
-      # without storage, we narrow the fire condition to the exact moment of
-      # transition by also requiring that a sensor's state changed in the past
-      # minute. This still produces at most ~1 alert per real sensor failure.)
+      # ---------- D. Sensor-health alert (tick-triggered, transition only) ----------
+      # Fires on the minute tick when health_alert is true AND a sensor just crossed
+      # the staleness boundary this tick (age between threshold and threshold+60s),
+      # or went unavailable/unknown within the last 60s. This fires once at the
+      # transition into a degraded state, not on every subsequent tick.
       - alias: "Sensor-health alert"
         conditions:
           - condition: trigger
@@ -535,17 +568,7 @@ actions:
               title: "Smart AC — sensor health"
               message: "{{ msg }}"
 
-      # ---------- E. Window/door open — force OFF ----------
-      - alias: "Window open — force switch off"
-        conditions:
-          - condition: template
-            value_template: "{{ window_open and switch_on and since_change_min >= min_on | int }}"
-        sequence:
-          - action: switch.turn_off
-            target:
-              entity_id: !input target_switch
-
-      # ---------- F. Cooling — demand ON ----------
+      # ---------- E. Cooling — demand ON ----------
       - alias: "Cooling demand — turn switch on"
         conditions:
           - condition: template
@@ -559,7 +582,7 @@ actions:
             target:
               entity_id: !input target_switch
 
-      # ---------- G. Cooling — satisfied OFF ----------
+      # ---------- F. Cooling — satisfied OFF ----------
       - alias: "Cooling satisfied — turn switch off"
         conditions:
           - condition: template
@@ -573,7 +596,7 @@ actions:
             target:
               entity_id: !input target_switch
 
-      # ---------- H. Heating — demand ON ----------
+      # ---------- G. Heating — demand ON ----------
       - alias: "Heating demand — turn switch on"
         conditions:
           - condition: template
@@ -587,7 +610,7 @@ actions:
             target:
               entity_id: !input target_switch
 
-      # ---------- I. Heating — satisfied OFF ----------
+      # ---------- H. Heating — satisfied OFF ----------
       - alias: "Heating satisfied — turn switch off"
         conditions:
           - condition: template
@@ -601,31 +624,11 @@ actions:
             target:
               entity_id: !input target_switch
 
-      # ---------- J. No mode set — ensure OFF ----------
+      # ---------- I. No mode set — ensure OFF ----------
       - alias: "No mode set — ensure switch off"
         conditions:
           - condition: template
             value_template: "{{ not is_cooling and not is_heating and switch_on and since_change_min >= min_on | int }}"
-        sequence:
-          - action: switch.turn_off
-            target:
-              entity_id: !input target_switch
-
-      # ---------- K. Sensor-loss safety shutdown ----------
-      # All sensors are lost (fused_temp == 'none') and the switch has been ON
-      # continuously past the sensor_loss_timeout grace period. Force off to
-      # prevent runaway operation. Disabled when sensor_loss_timeout == 0.
-      # Note: since_change_min measures time since the switch last changed state,
-      # not time since sensors went stale — use a generous default (10 min) to
-      # avoid false trips when sensors recover quickly after a hub reboot.
-      - alias: "Sensor-loss safety shutdown"
-        conditions:
-          - condition: template
-            value_template: >-
-              {{ fused_temp == 'none'
-                 and switch_on
-                 and sensor_loss_timeout | int > 0
-                 and since_change_min >= sensor_loss_timeout | int }}
         sequence:
           - action: switch.turn_off
             target:

@@ -64,8 +64,8 @@ Each alert is edge-triggered — it fires once when its condition becomes true a
 - **Runtime alert**: fires when the switch state transitions to "on" and stays on for `max_runtime_minutes`. Resets when the switch turns off.
 - **Trend ("no progress") alert**: fires when the switch has been on for `trend_window_minutes` *and* the room is still beyond setpoint by (deadband + trend_delta). Resets when the switch turns off.
 - **Mode-mismatch alert**: fires only when you *change* the mode helper. If you set it to "Cooling" while the room is already cold, you get one alert.
-- **Sensor-health alert**: fires on the minute tick when fewer than 1 fresh sensor remains, triggered either by a sensor crossing the staleness boundary within the last tick or going `unavailable`/`unknown` within the last 60 s. Catches the *transition* into a degraded state.
-- **Sensor-loss safety shutdown**: if all sensors are lost and the switch has been continuously ON for longer than `sensor_loss_timeout` minutes, the switch is forced off. Set to 0 to disable. Protects against runaway operation when the sensor hub loses connectivity.
+- **Sensor-health alert**: fires on the minute tick when all sensors are lost, but only at the *transition* — either a sensor just crossed the staleness boundary within the last tick, or went `unavailable`/`unknown` within the last 60 s. Does not repeat on every tick while degraded.
+- **Sensor-loss safety shutdown**: if all sensors are lost and the switch has been continuously ON for longer than `sensor_loss_timeout` minutes, the switch is forced off. Set to 0 to disable. Note: the clock measures time since the switch last changed state, not since sensors went stale — use a generous default (10 min) to avoid false trips on brief hub reboots.
 
 Trade-off: on Home Assistant restart, in-memory edge state clears. If a condition is currently true (e.g. the switch has been on for an hour at the moment of restart), the corresponding alert may fire once on first evaluation after restart. This is generally fine.
 
