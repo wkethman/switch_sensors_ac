@@ -1,7 +1,20 @@
 blueprint:
   name: Smart AC Switch Controller
   description: >
-    **Version 1.0.0**
+    **Version 1.1.0**
+
+    **Changelog (1.1.0):**
+
+    - Weighting fix: recency weight changed from 1 / max(age, 1) to
+      exponential half-life decay (0.5 ^ (age / half_life_minutes)). A
+      just-reported sensor no longer swamps a slightly older one by orders of
+      magnitude, so divergent Zigbee chip/board sensors can no longer pull the
+      fused reading far from the real room temperature. New optional input
+      `half_life_minutes` (default 15).
+    - Outlier resistance: with 3 or more fresh sensors the fused value is the
+      MEDIAN of the fresh readings (weighted mean is still used for 1–2).
+    - Backward compatible: existing instances keep working unchanged; fused
+      values shift slightly due to the new weighting — intended.
 
 
     Controls an on/off AC switch using up to 5 temperature sensors and a user-set
@@ -100,7 +113,9 @@ blueprint:
         Up to 5 temperature sensors. Only sensor 1 is required. The automation
         drops any sensor that is unavailable, non-numeric, or whose
         last_updated exceeds the staleness threshold, then fuses the remainder
-        with a recency weight (1 / max(age_seconds, 1)).
+        with an exponential half-life recency weight (0.5 ^ (age / half_life));
+        with 3+ fresh sensors the fused value is the median of the fresh
+        readings (outlier-resistant).
       input:
         sensor_1:
           name: Sensor 1 (required)
@@ -145,6 +160,21 @@ blueprint:
           name: Staleness threshold
           description: Sensors not updated within this window are ignored.
           default: 30
+          selector:
+            number:
+              min: 1
+              max: 240
+              step: 1
+              unit_of_measurement: "min"
+              mode: box
+        half_life_minutes:
+          name: Recency half-life
+          description: >
+            Recency weight decays as 0.5 ^ (age / half_life): a sensor
+            this old has half the weight of a just-reported one. Lower
+            values make the newest sensor dominate faster; higher values
+            smooth the fused reading. Default 15 minutes.
+          default: 15
           selector:
             number:
               min: 1
@@ -260,7 +290,9 @@ blueprint:
             Optional. If set, the automation writes the recency-weighted fused
             temperature to this helper every minute (as long as at least one
             sensor is fresh). Useful for dashboards, graphs, and debugging.
-            Recommended config: min 0, max 150, step 0.1, unit °F.
+            With 3+ fresh sensors the value is the median of the fresh sensor
+            readings (outlier-resistant). Recommended config: min 0, max 150,
+            step 0.1, unit °F.
           default: ""
           selector:
             entity:
@@ -358,6 +390,7 @@ variables:
   winter_sp: !input winter_setpoint
   band: !input deadband
   staleness: !input staleness_minutes
+  half_life: !input half_life_minutes
   max_runtime: !input max_runtime_minutes
   min_on: !input min_on_minutes
   min_off: !input min_off_minutes
@@ -391,10 +424,20 @@ variables:
   fused_temp: >-
     {% if fresh_count | int == 0 %}
       none
+    {% elif fresh_count | int >= 3 %}
+      {# Median of fresh values (outlier-resistant); no built-in median filter, so inline #}
+      {% set vals = fresh | map(attribute='val') | list | sort %}
+      {% set n = vals | length %}
+      {% if n % 2 == 1 %}
+        {{ (vals[(n - 1) // 2]) | round(2) }}
+      {% else %}
+        {{ ((vals[n // 2 - 1] + vals[n // 2]) / 2) | round(2) }}
+      {% endif %}
     {% else %}
+      {# 1-2 fresh sensors: half-life weighted mean (median of 1-2 is the mean) #}
       {% set w = namespace(num=0, den=0) %}
       {% for r in fresh %}
-        {% set weight = 1.0 / ([r.age, 1] | max) %}
+        {% set weight = 0.5 ** (r.age / ((half_life | float) * 60)) %}
         {% set w.num = w.num + r.val * weight %}
         {% set w.den = w.den + weight %}
       {% endfor %}
